@@ -48,18 +48,32 @@ func GetCfg(cfgInput AWSConfigInput) (awsV2.Config, error) {
 
 	if cfgInput.UseLocalStack {
 		cfg, err = GetLocalstackCfg(cfgInput.Region)
-	} else if cfgInput.UseEnvVariables {
-		cfg, err = GetCfgUsingEnvVariables(cfgInput.Profile, cfgInput.Region)
 	} else {
-		cfg, err = awsV2Config.LoadDefaultConfig(
-			context.TODO(),
-			awsV2Config.WithSharedConfigProfile(cfgInput.Profile),
-			awsV2Config.WithRegion(cfgInput.Region),
-		)
+		if cfgInput.Profile != "" && cfgInput.Region != "" {
+			cfg, err = awsV2Config.LoadDefaultConfig(
+				context.TODO(),
+				awsV2Config.WithSharedConfigProfile(cfgInput.Profile),
+				awsV2Config.WithRegion(cfgInput.Region),
+			)
+		} else if cfgInput.Profile != "" {
+			cfg, err = awsV2Config.LoadDefaultConfig(
+				context.TODO(),
+				awsV2Config.WithSharedConfigProfile(cfgInput.Profile),
+			)
+		} else if cfgInput.Region != "" {
+			cfg, err = awsV2Config.LoadDefaultConfig(
+				context.TODO(),
+				awsV2Config.WithRegion(cfgInput.Region),
+			)
+		} else {
+			cfg, err = awsV2Config.LoadDefaultConfig(
+				context.TODO(),
+			)
+		}
 	}
 
 	if err != nil {
-		log.Print("failed to load config")
+		log.Printf("failed to load config: %v", err)
 		return awsV2.Config{}, err
 	}
 	creds, err := cfg.Credentials.Retrieve(context.TODO())

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	cfg "github.com/aws/aws-sdk-go-v2/config"
-	awsS "github.com/aws/aws-sdk-go/aws"
 	"github.com/derailed/tview"
 	"github.com/gdamore/tcell/v2"
 	"github.com/one2nc/cloudlens/internal"
@@ -27,16 +25,15 @@ const (
 )
 
 var (
-	availableCloud  = []string{"AWS", "GCP"}
 	profile, region string
 )
 
 type App struct {
 	*ui.App
-	Content             *PageStack
-	command             *Command
-	context             context.Context
-	cancelFn            context.CancelFunc
+	Content *PageStack
+	command *Command
+	context context.Context
+
 	showHeader          bool
 	IsPageContentSorted bool
 	version             string
@@ -100,39 +97,31 @@ func (a *App) handleAWS() {
 		regions = readAndValidateRegion()
 	} else {
 		var err error
-		profiles, err = readAndValidateProfile()
+		profiles, err = aws.GetProfiles()
 		if err != nil {
-			panic(err)
+			log.Printf("failed to read profiles -- %v", err)
+			return
 		}
-		if len(profiles) > 0 {
-			if profiles[0] == "default" && len(region) == 0 {
-				region = getDefaultAWSRegion()
-			} else if len(region) == 0 {
-				region = "ap-south-1"
-			}
-
-			regions = readAndValidateRegion()
-
-		} else {
-			profile := awsS.String(os.Getenv(internal.AWS_PROFILE))
-			profiles = []string{*profile}
-			region := awsS.String(os.Getenv(internal.AWS_DEFAULT_REGION))
-			regions = []string{*region}
-			awsConfigInput.UseEnvVariables = true
-		}
+		regions = aws.GetAllRegions()
 	}
 
-	awsConfigInput.Profile = profiles[0]
-	awsConfigInput.Region = regions[0]
+	awsConfigInput.Profile = profile
+	awsConfigInput.Region = region
 	cfg, err := aws.GetCfg(awsConfigInput)
 	if err != nil {
 		panic(fmt.Sprintf("aws session init failed -- %v", err))
 	}
+
+	if profile == "" {
+		profile = os.Getenv(internal.AWS_PROFILE)
+	}
+	profiles, _ = config.SwapFirstIndexWithValue(profiles, profile)
+	regions, _ = config.SwapFirstIndexWithValue(regions, cfg.Region)
 	ctx := context.WithValue(a.context, internal.KeySession, cfg)
 	a.SetContext(ctx)
 
-	ctx = context.WithValue(ctx, internal.KeyActiveProfile, profiles[0])
-	ctx = context.WithValue(ctx, internal.KeyActiveRegion, regions[0])
+	ctx = context.WithValue(ctx, internal.KeyActiveProfile, profile)
+	ctx = context.WithValue(ctx, internal.KeyActiveRegion, region)
 	ctx = context.WithValue(ctx, internal.KeySelectedCloud, internal.AWS)
 	a.SetContext(ctx)
 	a.App.UpdateContext(ctx)
@@ -532,22 +521,6 @@ func (a *App) region() *ui.DropDown {
 	return a.Views()["region"].(*ui.DropDown)
 }
 
-func readAndValidateProfile() ([]string, error) {
-	profiles, err := aws.GetProfiles()
-	if err != nil {
-		log.Printf("failed to read profiles -- %v", err)
-		return nil, err
-	}
-	profiles, isSwapped := config.SwapFirstIndexWithValue(profiles, profile)
-	if !isSwapped {
-		if profile != "" {
-			fmt.Fprintf(os.Stderr, "Could not load profile: %v\n", profile)
-			os.Exit(1)
-		}
-	}
-	return profiles, nil
-}
-
 func readAndValidateRegion() []string {
 	regions := aws.GetAllRegions()
 	regions, isSwapped := config.SwapFirstIndexWithValue(regions, region)
@@ -558,14 +531,4 @@ func readAndValidateRegion() []string {
 		}
 	}
 	return regions
-}
-
-func getDefaultAWSRegion() string {
-	cfg, err := cfg.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load AWS SDK config: %v\n", err)
-		os.Exit(1)
-	}
-	region := cfg.Region
-	return region
 }
